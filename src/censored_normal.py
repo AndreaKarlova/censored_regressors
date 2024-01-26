@@ -94,7 +94,14 @@ class CensoredNormal(ExponentialFamily):
         rsamples =  self.loc + eps * self.scale
         return rsamples.clamp(min=self.low, max=self.high)
 
-
+    def pdf(self, value):
+        probs = torch.exp(self.log_prob(value))
+        lower_cdf_mass = self._normal_cdf(self.low) 
+        upper_cdf_mass = 1 - self._normal_cdf(self.high)
+        probs = torch.where(value <= self.low, lower_cdf_mass, probs)
+        probs = torch.where(value >= self.high, upper_cdf_mass, probs)
+        return probs
+    
     def log_prob(self, value, jitter=1e-07):
         """jitter: used to bounce off NormCDF from 0 before applying log """
         if self._validate_args:
@@ -109,20 +116,12 @@ class CensoredNormal(ExponentialFamily):
             - log_scale
             - math.log(math.sqrt(2 * math.pi))
          )
-
-        lower_censored_idx = (value <= self.low)
-        upper_censored_idx = (value >= self.high)
-        lower_cdf_mass = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
+        lower_log_cdf_mass = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
                                                                                                 Number) else (self._normal_cdf(self.low) + jitter).log()
-        upper_cdf_mass = math.log(1 - self._normal_cdf(self.high) + jitter) if isinstance(1 - self._normal_cdf(self.high) + jitter,
+        upper_log_cdf_mass = math.log(1 - self._normal_cdf(self.high) + jitter) if isinstance(1 - self._normal_cdf(self.high) + jitter,
                                                                                                     Number) else (1 - self._normal_cdf(self.high) + jitter).log()
-
-        lower_cdf_mass = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
-                                                                                                Number) else (self._normal_cdf(self.low) + jitter).log()
-        upper_cdf_mass = math.log(1 - self._normal_cdf(self.high) + jitter) if isinstance(1 - self._normal_cdf(self.high) + jitter,
-                                                                                                    Number) else (1 - self._normal_cdf(self.high) + jitter).log()
-        log_probs = torch.where(value <= self.low, lower_cdf_mass, log_probs)
-        log_probs = torch.where(value >= self.high, upper_cdf_mass, log_probs)
+        log_probs = torch.where(value <= self.low, lower_log_cdf_mass, log_probs)
+        log_probs = torch.where(value >= self.high, upper_log_cdf_mass, log_probs)
         return log_probs
 
     def _normal_cdf(self, value):
