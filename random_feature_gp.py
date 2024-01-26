@@ -1,6 +1,8 @@
 import torch
 import torch.distributions as dist
 
+# import numpy as np
+
 def generate_rff(dim, M=100):
     """ Generate random Fourier feature function with dimensionality `dim` and `M` features """
     W = torch.randn(dim, M)
@@ -42,5 +44,7 @@ def bayesian_censored_model_loss(w, phi, y, noise, MAX_VALUE=0):
     uncensored = (y < MAX_VALUE)
     standard_normal = dist.Normal(0,1)
     likelihood_a = standard_normal.log_prob((y[uncensored]-y_hat[uncensored])/noise)-noise.log()
-    likelihood_b = (1 - standard_normal.cdf((MAX_VALUE - y_hat[~uncensored])/noise)).log()
+    likelihood_b = torch.clamp_min(1 - standard_normal.cdf((MAX_VALUE - y_hat[~uncensored])/noise), 1e-8).log()
+#     assert np.all(np.isfinite(likelihood_a.detach().numpy()))
+#     assert np.all(np.isfinite(likelihood_b.detach().numpy()))
     return -(prior + likelihood_a.sum(-1) + likelihood_b.sum(-1))
