@@ -6,7 +6,8 @@ from torch.distributions import constraints
 from torch.distributions.exp_family import ExponentialFamily
 from torch.distributions.utils import _standard_normal, broadcast_all
 
-from pyro.distributions.torch_distribution import TorchDistributionMixin
+from pyro.distributions.torch_distribution import TorchDistribution
+from pyro.distributions.util import broadcast_shape
 
 __all__ = ["CensoredNormal"]
 
@@ -19,7 +20,7 @@ class CensoredNormal(ExponentialFamily):
     Example::
 
         >>> # xdoctest: +IGNORE_WANT("non-deterministic")
-        >>> m = CensorNormal(
+        >>> m = CensoredNormal(
           torch.tensor([0.0]), torch.tensor([1.0]),
           torch.tensor([-0.5]), torch.tensor([0.5])
           )
@@ -50,10 +51,12 @@ class CensoredNormal(ExponentialFamily):
 
     @property
     def stddev(self):
+      # adjust the moments such that it fits the censored normal
         return self.scale
 
     @property
     def variance(self):
+      # adjust the moments such that it fits the censored normal
         return self.stddev.pow(2)
 
     def __init__(self, loc, scale, low, high, validate_args=None):
@@ -70,15 +73,15 @@ class CensoredNormal(ExponentialFamily):
         batch_shape = torch.Size(batch_shape)
         new.loc = self.loc.expand(batch_shape)
         new.scale = self.scale.expand(batch_shape)
-        new.lower = self.low.expand(batch_shape)
+        new.low = self.low.expand(batch_shape)
         new.high = self.high.expand(batch_shape)
         super(CensoredNormal, new).__init__(batch_shape, validate_args=False)
         new._validate_args = self._validate_args
         return new
 
-    # @constraints.dependent_property(is_discrete=False, event_dim=0)
-    # def support(self):
-    #     return constraints.interval(self.low, self.high)
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self.low, self.high)
 
 
     def sample(self, sample_shape=torch.Size()):
@@ -95,6 +98,8 @@ class CensoredNormal(ExponentialFamily):
         return rsamples.clamp(min=self.low, max=self.high)
 
     def pdf(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
         probs = torch.exp(self.log_prob(value))
         lower_cdf_mass = self._normal_cdf(self.low) 
         upper_cdf_mass = 1 - self._normal_cdf(self.high)
@@ -124,6 +129,18 @@ class CensoredNormal(ExponentialFamily):
         log_probs = torch.where(value >= self.high, upper_log_cdf_mass, log_probs)
         return log_probs
 
+    def cdf(self, value):
+        if self._validate_args:
+            self._validate_sample(value)
+        cdf_ = self._normal_cdf(value)
+        cdf_ = torch.where(value < self.low, 0, cdf_)
+        cdf_ = torch.where(value > self.high, 1, cdf_)
+        return cdf_
+
+    def icdf(self, value):
+        result = self._normal_icdf(value)
+        return result.clamp(min=self.low, max=self.high)
+
     def _normal_cdf(self, value):
         if self._validate_args:
             self._validate_sample(value)
@@ -145,8 +162,8 @@ class CensoredNormal(ExponentialFamily):
         return -0.25 * x.pow(2) / y + 0.5 * torch.log(-math.pi / y)
 
 
-class PyroCensoredNormal(CensoredNormal, TorchDistributionMixin):
-    def __init__(self, loc, scale, low, high, validate_args=None):
+class PyroCensoredNormal(CensoredNormal, TorchDistribution):
+    def __init__(self, loc, scale, low, high, validate_args=None, **kwargs):
         self._unbroadcasted_loc = loc
         self._unbroadcasted_scale = scale
         self._unbroadcasted_low = low
@@ -154,7 +171,7 @@ class PyroCensoredNormal(CensoredNormal, TorchDistributionMixin):
         super().__init__(loc, scale, low, high, validate_args=validate_args)
 
     def expand(self, batch_shape, _instance=None):
-        new = self._get_checked_instance(CensoredNormal, _instance)
+        new = self._get_checked_instance(type(self), _instance)
         new = super().expand(batch_shape, _instance=new)
         new._unbroadcasted_loc = self._unbroadcasted_loc
         new._unbroadcasted_scale = self._unbroadcasted_scale
@@ -162,6 +179,6 @@ class PyroCensoredNormal(CensoredNormal, TorchDistributionMixin):
         new._unbroadcasted_high = self._unbroadcasted_high
         return new
 
-    # @constraints.dependent_property(is_discrete=False, event_dim=0)
-    # def support(self):
-    #     return constraints.interval(self._unbroadcasted_low, self._unbroadcasted_high)
+    @constraints.dependent_property(is_discrete=False, event_dim=0)
+    def support(self):
+        return constraints.interval(self._unbroadcasted_low, self._unbroadcasted_high)
