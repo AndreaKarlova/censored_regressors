@@ -43,7 +43,11 @@ class CensoredNormal(ExponentialFamily):
 
     @property
     def mean(self):
-        return math.exp(self._normal_log_prob((self.low - self.loc)/self.scale)) - math.exp(self._normal_log_prob((self.high - self.loc)/self.scale))
+        x1 = (self.low - self.loc) / self.scale
+        x2 = (self.high - self.loc) / self.scale
+        term1 = math.exp(self._normal_log_prob(x2)) - math.exp(self._normal_log_prob(x1))
+        term2 = self._normal_cdf(x2) - self._normal_cdf(x1)
+        return self.loc * term1 - self.scale * term2
 
     @property
     def stddev(self):
@@ -51,9 +55,11 @@ class CensoredNormal(ExponentialFamily):
 
     @property
     def variance(self):
-        x1 = (self.low - self.loc)/self.scale
-        x2 = (self.high - self.loc)/self.scale
-        return self._normal_cdf(x2) - self._normal_cdf(x1) - x2 * math.exp(self._normal_log_prob(x2)) + x1 * math.exp(self._normal_log_prob(x1))
+        x1 = (self.low - self.loc) / self.scale
+        x2 = (self.high - self.loc) / self.scale
+        term1 = x2 * math.exp(self._normal_log_prob(x2)) - x1 * math.exp(self._normal_log_prob(x1))
+        term2 = self._normal_cdf(x2) - self._normal_cdf(x1)
+        return self.scale * (term1 - term2)
 
     def __init__(self, loc, scale, low, high, validate_args=None):
         self.loc, self.scale, self.low, self.high = broadcast_all(loc, scale, low, high)
@@ -138,7 +144,7 @@ class CensoredNormal(ExponentialFamily):
 
         term1 = self._normal_entropy() * (self._normal_cdf(x_high)- self._normal_cdf(x_low))
         term2 = 0.5 * (x_high * math.exp(self._normal_log_prob(x_high)) - x_low * math.exp(self._normal_log_prob(x_low)))
-        term3 = logcdf_x_high * self._normal_cdf(x_high) +  logcdf_x_low * self._normal_cdf(x_low)
+        term3 = logcdf_x_high * (1 - self._normal_cdf(x_high)) -  logcdf_x_low * self._normal_cdf(x_low)
         return term1 - term2 - term3
 
 
