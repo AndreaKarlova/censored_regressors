@@ -147,15 +147,17 @@ class CensoredNormal(ExponentialFamily):
     def entropy(self, jitter=1e-12):
         x_low = (self.low - self.loc)/self.scale
         x_high = (self.high - self.loc)/self.scale
+
         logcdf_x_low = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
                                                                                                   Number) else (self._normal_cdf(self.low) + jitter).log()
-        logcdf_x_high = math.log(1 - self._normal_cdf(self.high) + jitter) if isinstance(1 - self._normal_cdf(self.high) + jitter,
-                                                                                                      Number) else (1 - self._normal_cdf(self.high) + jitter).log()
+        logcdf_x_high = math.log(self._normal_cdf_standardized(-x_high) + jitter) if isinstance(self._normal_cdf_standardized(x_high) + jitter,
+                                                                                                      Number) else (self._normal_cdf_standardized(-x_high) + jitter).log()
 
         term1 = self._normal_entropy() * (self._normal_cdf(self.high)- self._normal_cdf(self.low))
         term2 = 0.5 * (x_high * torch.exp(self._normal_log_prob(self.high)) - x_low * torch.exp(self._normal_log_prob(self.low)))
-        term3 = logcdf_x_high * (1. - self._normal_cdf(self.high)) -  logcdf_x_low * self._normal_cdf(self.low)
-        return term1 - term2 - term3
+        term3 = logcdf_x_low * self._normal_cdf(self.low)
+        term4 = logcdf_x_high * (self._normal_cdf_standardized(-x_high))
+        return term1 - term2 - term3 - term4
 
 
     def _normal_log_prob(self, value):
@@ -175,11 +177,17 @@ class CensoredNormal(ExponentialFamily):
             1 + torch.erf((value - self.loc) * self.scale.reciprocal() / math.sqrt(2))
         )
 
+    def _normal_cdf_standardized(self, z):
+        return 0.5 * (
+            1 + torch.erf(z / math.sqrt(2))
+        )
+
     def _normal_icdf(self, value):
         return self.loc + self.scale * torch.erfinv(2 * value - 1) * math.sqrt(2)
 
 
-    def _normal_entropy(self):
+    def _normal_entropy(self):\
+        # log(sqrt(2 pi e) * sigma) = 0.5 * log(2 pi e) + log(sigma) = 0.5 + 0.5 (log(2 pi)) + log(sigma)
         return 0.5 + 0.5 * math.log(2 * math.pi) + torch.log(self.scale)
 
     @property
