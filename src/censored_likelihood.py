@@ -31,7 +31,44 @@ class CensoredGaussianLikelihood(_Likelihood):
         return CensoredNormal(function_samples, scale=self.variance.sqrt(), low=self.low, high=self.high)
 
 
+class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
+    def __init__(self, variance=None, low=None, high=None, alpha=1., gamma=1., dzeta=1., jitter_=1e-16) -> None:
+        super().__init__(variance, low, high)
+        self.alpha = alpha
+        self.gamma = gamma
+        self.dzeta = dzeta
+        self.jitter_ = jitter_
+
+    def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
+        noise = self.variance # likelihood
+        mean, variance = input.mean, input.variance # approximate posterior
+
+        upper_censor = lambda x, s: (self.high - x) / s
+        lower_censor = lambda x, s: (self.low - x) / s
+
+        standard_normal = dist.Normal(0,1)
+         # Gaussian term
+        res = ((target - mean).square() + variance) / noise + noise.log() + math.log(2 * math.pi)
+        res = res.mul(-0.5)
+        term3 = standard_normal.cdf(upper_censor(mean, std)) - standard_normal.cdf(lower_censor(mean, std))
+        normal_part = res * term3
+
+        # upper term
+        x1 = (self.high - 2*target + mean) * variance.sqrt()
+        term4 = torch.clamp_min(standard_normal.cdf(-upper_censor(target, variance.sqrt())), self.jitter_).log() + 0.5 * x1 * noise.reciprocal()
+        upper_censored_part = term4 * standard_normal.log_prob(upper_censor(mean, variance.sqrt())).exp()
+
+        # lower term
+        x2 = (self.low - 2*target + mean) * variance.sqrt()
+        term5 = torch.clamp_min(standard_normal.cdf(lower_censor(target, variance.sqrt())), self.jitter_).log() - 0.5 * x2 * noise.reciprocal()
+        lower_censored_part = term5 * standard_normal.log_prob(lower_censor(mean, variance.sqrt())).exp()
+
+        res = self.alpha * normal_part - self.gamma * upper_censored_part - self.dzeta * lower_censored_part
+        return res
+
+
 class CensoredGaussianLikelihoodMathematica(CensoredGaussianLikelihood):
+    # Dani's original implementation
     def __init__(self, variance=None, low=None, high=None) -> None:
         super().__init__(variance, low, high)
 
@@ -66,44 +103,8 @@ class CensoredGaussianLikelihoodMathematica(CensoredGaussianLikelihood):
         return res
 
 
-class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
-    def __init__(self, variance=None, low=None, high=None, alpha=1., gamma=1., dzeta=1., jitter_=1e-16) -> None:
-        super().__init__(variance, low, high)
-        self.alpha = alpha
-        self.gamma = gamma
-        self.dzeta = dzeta
-        self.jitter_ = jitter_
-
-    def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
-        noise = self.variance # likelihood
-        mean, variance = input.mean, input.variance # approximate posterior
-
-        upper_censor = lambda x, s: (self.high - x) / s
-        lower_censor = lambda x, s: (self.low - x) / s
-
-        standard_normal = dist.Normal(0,1)
-         # Gaussian term
-        term1 = torch.log(noise) + math.log(2 * math.pi)
-        term2 = ((target - mean).square() + variance) * noise.reciprocal()
-        term3 = standard_normal.cdf(upper_censor(mean, variance.sqrt())) - standard_normal.cdf(lower_censor(mean, variance.sqrt()))
-        normal_part_unscaled = (term1 - term2).mul(0.5)
-        normal_part = normal_part_unscaled * term3
-
-        # upper term
-        x1 = (self.high - 2*target + mean) * variance.sqrt()
-        term4 = torch.clamp_min(standard_normal.cdf(-upper_censor(target, variance.sqrt())), self.jitter_).log() + 0.5 * x1 * noise.reciprocal()
-        upper_censored_part = term4 * standard_normal.log_prob(upper_censor(mean, variance.sqrt())).exp()
-
-        # lower term
-        x2 = (self.low - 2*target + mean) * variance.sqrt()
-        term5 = torch.clamp_min(standard_normal.cdf(lower_censor(target, variance.sqrt())), self.jitter_).log() - 0.5 * x2 * noise.reciprocal()
-        lower_censored_part = term5 * standard_normal.log_prob(lower_censor(mean, variance.sqrt())).exp()
-
-        res = self.alpha * normal_part - self.gamma * upper_censored_part - self.dzeta * lower_censored_part
-        return res
-
-
 class CensoredGaussianLikelihoodMathematica(CensoredGaussianLikelihoodAnalytic):
+    # Updated implementation -- overwrites previous
     def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
         noise = self.variance  # likelihood
         sigma = torch.sqrt(noise)
