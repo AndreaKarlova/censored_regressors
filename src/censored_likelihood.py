@@ -39,7 +39,8 @@ class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
         self.dzeta = dzeta
         self.jitter_ = jitter_
 
-    def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
+    def _expected_log_prob_terms(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
+
         noise = self.variance # likelihood
         sigma = noise.sqrt()
         mean, variance = input.mean, input.variance # approximate posterior
@@ -52,8 +53,8 @@ class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
          # Gaussian term
         res = ((target - mean).square() + variance) / noise + noise.log() + math.log(2 * math.pi)
         res = res.mul(-0.5)
-        term3 = standard_normal.cdf(upper_censor(mean, std)) - standard_normal.cdf(lower_censor(mean, std))
-        normal_part = res * term3  # log-likelihood, maximized
+        uncensored_cdf = standard_normal.cdf(upper_censor(mean, std)) - standard_normal.cdf(lower_censor(mean, std))
+        normal_part = res * uncensored_cdf  # maximized
 
         # upper term
         x = 0.5 * (self.high - 2*target + mean) * std * noise.reciprocal()  # minimized
@@ -69,8 +70,18 @@ class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
         lower_term_pdf = standard_normal.log_prob(lower_censor(mean, std)).exp()
         lower_censored_part = (ln_cdf - x) * lower_term_pdf  # minimized
 
-        res = self.alpha * normal_part - self.gamma * upper_censored_part - self.dzeta * lower_censored_part
-        return res
+        Phi = lambda m, s, a: torch.special.erf((a - m) / (np.sqrt(2) * s))
+
+        return dict(normal_part=normal_part, normal_part_cdf=uncensored_cdf,
+                    upper_censored_part=upper_censored_part, upper_term_pdf=upper_term_pdf,
+                    lower_censored_part=lower_censored_part, lower_term_pdf=lower_term_pdf,
+                    lower_cdf_pred=Phi(self.low, std, mean), upper_cdf_pred=Phi(self.high, std, mean),
+                    lower_cdf_target=Phi(self.low, sigma, target), upper_cdf_target=Phi(self.high, sigma, target)
+                    )
+
+    def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
+      terms = self._expected_log_prob_terms(target, input, *params, **kwargs)
+      return self.alpha * terms['normal_part'] + self.gamma * terms['upper_censored_part'] + self.dzeta * terms['lower_censored_part']
 
 
 class CensoredGaussianLikelihoodMathematica(CensoredGaussianLikelihood):
