@@ -3,6 +3,7 @@ import warnings
 from copy import deepcopy
 from typing import Any, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.distributions as dist
 from torch import Tensor
@@ -100,3 +101,43 @@ class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
 
         res = self.alpha * normal_part - self.gamma * upper_censored_part - self.dzeta * lower_censored_part
         return res
+
+
+class CensoredGaussianLikelihoodMathematica(CensoredGaussianLikelihoodAnalytic):
+    def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
+        noise = self.variance  # likelihood
+        sigma = torch.sqrt(noise)
+        sigma2 = noise
+
+        mean, variance = input.mean, input.variance  # approximate posterior
+        m = mean
+        s = variance
+
+        mu = target
+        l = self.low
+        u = self.high
+
+        log = lambda x: torch.log(torch.maximum(x,torch.as_tensor(1e-8).to(x)))
+        phi = lambda m, s, u: torch.exp(-((m - u) ** 2 / (2 * s ** 2)))
+        Phi = lambda m, s, a: torch.special.erf((a - m) / (np.sqrt(2) * s))
+
+        sqrt2pi = np.sqrt(2 * np.pi)
+        log2 = np.log(2)
+        logpi = np.log(np.pi)
+
+        return (
+                (log((1 / 2) * (1 - Phi(l, sigma, mu))) * phi(l, s, m)) / (sqrt2pi * s) +
+                (log(1 + (1 / 2) * (-1 + Phi(u, sigma, mu))) * phi(u, s, m)) / (sqrt2pi * s) +
+                (1 / (4 * sqrt2pi * sigma2)) * (
+                        -2 * s * (l + m - 2 * mu) * phi(l, s, m) +
+                        2 * s * (m + u - 2 * mu) * phi(m, s, u) -
+                        sqrt2pi * Phi(m, s, l) * (
+                                l ** 2 - m ** 2 - s ** 2 - 2 * l * mu + 2 * m * mu - sigma2 * log2 - sigma2 * logpi +
+                                2 * sigma2 * log(phi(l, sigma, mu) / sigma)
+                        ) +
+                        sqrt2pi * Phi(u, s, m) * (
+                                m ** 2 + s ** 2 - u ** 2 - 2 * m * mu + 2 * u * mu + sigma2 * log2 + sigma2 * logpi -
+                                2 * sigma2 * log(phi(u, sigma, mu) / sigma)
+                        )
+                )
+        )
