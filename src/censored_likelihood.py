@@ -41,7 +41,9 @@ class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
 
     def expected_log_prob(self, target: Tensor, input: dist.MultivariateNormal, *params: Any, **kwargs: Any) -> Tensor:
         noise = self.variance # likelihood
+        sigma = noise.sqrt()
         mean, variance = input.mean, input.variance # approximate posterior
+        std = variance.sqrt()
 
         upper_censor = lambda x, s: (self.high - x) / s
         lower_censor = lambda x, s: (self.low - x) / s
@@ -51,17 +53,21 @@ class CensoredGaussianLikelihoodAnalytic(CensoredGaussianLikelihood):
         res = ((target - mean).square() + variance) / noise + noise.log() + math.log(2 * math.pi)
         res = res.mul(-0.5)
         term3 = standard_normal.cdf(upper_censor(mean, std)) - standard_normal.cdf(lower_censor(mean, std))
-        normal_part = res * term3
+        normal_part = res * term3  # log-likelihood, maximized
 
         # upper term
-        x1 = (self.high - 2*target + mean) * variance.sqrt()
-        term4 = torch.clamp_min(standard_normal.cdf(-upper_censor(target, variance.sqrt())), self.jitter_).log() + 0.5 * x1 * noise.reciprocal()
-        upper_censored_part = term4 * standard_normal.log_prob(upper_censor(mean, variance.sqrt())).exp()
+        x = 0.5 * (self.high - 2*target + mean) * std * noise.reciprocal()  # minimized
+        upper_term_cdf = standard_normal.cdf(-upper_censor(target, sigma))
+        ln_cdf = torch.clamp_min(upper_term_cdf, self.jitter_).log()
+        upper_term_pdf = standard_normal.log_prob(upper_censor(mean, std)).exp()
+        upper_censored_part = (ln_cdf + x) * upper_term_pdf  # minimized
 
         # lower term
-        x2 = (self.low - 2*target + mean) * variance.sqrt()
-        term5 = torch.clamp_min(standard_normal.cdf(lower_censor(target, variance.sqrt())), self.jitter_).log() - 0.5 * x2 * noise.reciprocal()
-        lower_censored_part = term5 * standard_normal.log_prob(lower_censor(mean, variance.sqrt())).exp()
+        x = 0.5 * (self.low - 2*target + mean) * std * noise.reciprocal()  # maximized
+        lower_term_cdf = standard_normal.cdf(lower_censor(target, sigma))
+        ln_cdf = torch.clamp_min(lower_term_cdf, self.jitter_).log()
+        lower_term_pdf = standard_normal.log_prob(lower_censor(mean, std)).exp()
+        lower_censored_part = (ln_cdf - x) * lower_term_pdf  # minimized
 
         res = self.alpha * normal_part - self.gamma * upper_censored_part - self.dzeta * lower_censored_part
         return res
