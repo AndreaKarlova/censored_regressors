@@ -124,12 +124,20 @@ class CensoredNormal(ExponentialFamily):
         if self._validate_args:
             self._validate_sample(value)
         log_probs = self._normal_log_prob(value)
-        lower_log_cdf_mass = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
-                                                                                                Number) else (self._normal_cdf(self.low) + jitter).log()
-        upper_log_cdf_mass = math.log(1 - self._normal_cdf(self.high) + jitter) if isinstance(1 - self._normal_cdf(self.high) + jitter,
-                                                                                                    Number) else (1 - self._normal_cdf(self.high) + jitter).log()
-        log_probs = torch.where(value <= self.low, lower_log_cdf_mass, log_probs)
-        log_probs = torch.where(value >= self.high, upper_log_cdf_mass, log_probs)
+
+        has_high = ~torch.isinf(self.high)
+        has_low = ~torch.isinf(self.low)
+
+        lower_cdf_mass = self._normal_cdf(self.low[has_low], loc=self.loc[has_low], scale=self.scale[has_low])
+        upper_cdf_mass = 1 - self._normal_cdf(self.high[has_high], loc=self.loc[has_high], scale=self.scale[has_high])
+        lower_log_cdf_mass = (lower_cdf_mass + jitter).log()
+        upper_log_cdf_mass = (upper_cdf_mass + jitter).log()
+        log_probs[has_low] = torch.where(
+            value[has_low] <= self.low[has_low], lower_log_cdf_mass.to(log_probs), log_probs[has_low]
+        )
+        log_probs[has_high] = torch.where(
+            value[has_high] >= self.high[has_high], upper_log_cdf_mass.to(log_probs), log_probs[has_high]
+        )
         return log_probs
 
     def cdf(self, value):
@@ -172,9 +180,11 @@ class CensoredNormal(ExponentialFamily):
                 - math.log(math.sqrt(2 * math.pi))
             )
 
-    def _normal_cdf(self, value):
+    def _normal_cdf(self, value, loc=None, scale=None):
+        loc = self.loc if loc is None else loc
+        scale = self.scale if scale is None else scale
         return 0.5 * (
-            1 + torch.erf((value - self.loc) * self.scale.reciprocal() / math.sqrt(2))
+                1 + torch.erf((value - loc) * scale.reciprocal() / math.sqrt(2))
         )
 
     def _normal_cdf_standardized(self, z):
