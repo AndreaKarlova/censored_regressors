@@ -22,7 +22,10 @@ def train_mll(mll, parameters=None):
             mll, parameters=parameters,
             callback=lambda p, r: trace.append(r)
         )
-        trace[-1] = res
+        if len(trace) > 0:
+            trace[-1] = res
+        else:
+            trace.append(res)
         return (res.status is not botorch.optim.core.OptimizationStatus.SUCCESS), trace
     except botorch.optim.utils.common.NotPSDError:
         return True, []
