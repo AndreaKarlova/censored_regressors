@@ -14,7 +14,7 @@ def apply_module(func, module):
         for name, _ in module.named_parameters():
             name = name.replace('raw_', '')
             param = rgetattr(module, name.split('.'))
-            func(name=name, param=param)
+            func(name, param)
 
 
 def print_module(module):
