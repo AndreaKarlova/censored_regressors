@@ -101,8 +101,9 @@ class CensoredMLL(gpytorch.mlls.MarginalLogLikelihood):
         super().__init__(likelihood, model)
 
     def forward(self, function_dist, target, *params, **kwargs):
+        variance = function_dist.variance + self.likelihood.noise.noise
         output = CensoredNormal(
-            function_dist.loc, function_dist.stddev, self.likelihood.low, self.likelihood.high
+            function_dist.loc, variance.sqrt(), self.likelihood.low, self.likelihood.high
         )
         res = output.log_prob(target)
         return res.mean()
