@@ -1,3 +1,5 @@
+import math
+
 import gpytorch
 import torch
 
@@ -31,14 +33,18 @@ class BaseGPModel:
             q = kernel_args[0]
             self.feature_extractor = LargeFeatureExtractor(d, q).to(self.train_inputs[0])
             self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.)
-            self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.MaternKernel(nu=nu, ard_num_dims=q)
-            )
+            if math.isinf(nu):
+                base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=q)
+            else:
+                base_kernel = gpytorch.kernels.MaternKernel(nu=nu, ard_num_dims=q)
+            self.covar_module = gpytorch.kernels.ScaleKernel(base_kernel)
         elif kernel_type == 'prod':
             q = d
-            self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.MaternKernel(nu=nu, ard_num_dims=q)
-            )
+            if math.isinf(nu):
+                base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=q)
+            else:
+                base_kernel = gpytorch.kernels.MaternKernel(nu=nu, ard_num_dims=q)
+            self.covar_module = gpytorch.kernels.ScaleKernel(base_kernel)
         elif kernel_type == 'xcat':
             self.continuous_columns = [i for i in range(d) if i not in categorical_size]
             self.covar_module = (
