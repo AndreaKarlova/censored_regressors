@@ -9,10 +9,15 @@ __all__ = ['ExactGP', 'VariationalGP', 'LargeFeatureExtractor', 'CensoredMLL', '
 
 
 class LargeFeatureExtractor(torch.nn.Sequential):
-    def __init__(self, data_dim, out_dim, latent_dim=10):
+    def __init__(self, data_dim, out_dim, latent_dim=10, activation='relu'):
         super(LargeFeatureExtractor, self).__init__()
         self.add_module('linear1', torch.nn.Linear(data_dim, latent_dim))
-        self.add_module('relu', torch.nn.ReLU())
+        if activation is None or activation == 'relu':
+            self.add_module('activation', torch.nn.ReLU())
+        elif activation == 'tanh':
+            self.add_module('activation', torch.nn.Tanh())
+        else:
+            raise RuntimeError(f'Unknown activation: {activation!r}')
         self.add_module('linear2', torch.nn.Linear(latent_dim, out_dim))
 
     def reset_parameters(self):
@@ -30,8 +35,13 @@ class BaseGPModel:
         self.kernel_type = kernel_type
         kernel_type, nu, *kernel_args = kernel_type
         if kernel_type == 'nn':
-            q = kernel_args[0]
-            self.feature_extractor = LargeFeatureExtractor(d, q).to(self.train_inputs[0])
+            q, activation = kernel_args
+            if q == 'd':
+                q = d
+            self.feature_extractor = LargeFeatureExtractor(
+                d, q,
+                activation=activation
+            ).to(self.train_inputs[0])
             self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.)
             if math.isinf(nu):
                 base_kernel = gpytorch.kernels.RBFKernel(ard_num_dims=q)

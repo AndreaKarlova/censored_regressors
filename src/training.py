@@ -1,9 +1,10 @@
+import functools
 from copy import deepcopy
 
 import botorch
 import gpytorch
-import numpy as np
 import pandas as pd
+from botorch.optim.core import OptimizationStatus
 
 from .models import CensoredMLL, initialize_gp
 
@@ -14,19 +15,23 @@ def set_trainable(train, *modules):
             module.requires_grad_(train)
 
 
-def train_mll(mll, parameters=None):
+__success_states__ = {OptimizationStatus.SUCCESS, OptimizationStatus.STOPPED}
+
+
+def train_mll(mll, parameters=None, optimizer=None, step_limit=None):
+    if optimizer is None:
+        fit = botorch.optim.fit.fit_gpytorch_mll_scipy
+    else:
+        fit = functools.partial(botorch.optim.fit.fit_gpytorch_mll_torch, optimizer=optimizer, step_limit=step_limit)
     mll.train()
     try:
         trace = []
-        res = botorch.optim.fit.fit_gpytorch_mll_scipy(
-            mll, parameters=parameters,
-            callback=lambda p, r: trace.append(r)
-        )
+        res = fit(mll, parameters=parameters, callback=lambda p, r: trace.append(r))
         if len(trace) > 0:
             trace[-1] = res
         else:
             trace.append(res)
-        return (res.status is not botorch.optim.core.OptimizationStatus.SUCCESS), trace
+        return (res.status not in __success_states__), trace
     except botorch.optim.utils.common.NotPSDError:
         return True, []
 
@@ -41,7 +46,7 @@ def ExactMLL(likelihood, model):
 def train_gp(
         likelihood, model,
         lmbdas=(4,), kappas=(10,),
-        use_mll=False,
+        use_mll=False, optimizer=None, step_limit=None
 ):
     if model.variational_strategy is None:
         elbo = ExactMLL(likelihood, model)
@@ -57,14 +62,14 @@ def train_gp(
         if use_mll:
             exact_mll = ExactMLL(likelihood, model)
             set_trainable(False, model.variational_strategy)
-            failed, exact_trace = train_mll(exact_mll)
+            failed, exact_trace = train_mll(exact_mll, optimizer=optimizer, step_limit=step_limit)
             if failed:
                 continue
             set_trainable(False, likelihood, model)
             set_trainable(True, model.variational_strategy)
         else:
             exact_trace = []
-        failed, trace = train_mll(elbo)
+        failed, trace = train_mll(elbo, optimizer=optimizer, step_limit=step_limit)
         if failed:
             continue
         results.append([
