@@ -47,9 +47,11 @@ class CensoredNormal(ExponentialFamily):
         x_high = (self.high - self.loc)/self.scale
         cdf_high = self._normal_cdf(self.high)
         pdf_high = math.exp(self._normal_log_prob(self.high))
+        
         x_low = (self.low - self.loc)/self.scale
         cdf_low = self._normal_cdf(self.low)
         pdf_low = math.exp(self._normal_log_prob(self.low))
+        
         term1 = cdf_high - cdf_low
         term2 = pdf_high - pdf_low
         term3 = self.low * cdf_low + self.high * (1. - cdf_high)
@@ -60,22 +62,29 @@ class CensoredNormal(ExponentialFamily):
         return self.variance.sqrt()
 
     @property
-    def variance(self):
+     def variance(self):
         x_high = (self.high - self.loc)/self.scale
         cdf_high = self._normal_cdf(self.high)
         pdf_high = math.exp(self._normal_log_prob(self.high))
+
         x_low = (self.low - self.loc)/self.scale
         cdf_low = self._normal_cdf(self.low)
         pdf_low = math.exp(self._normal_log_prob(self.low))
+
+        scaler = self.loc**2 + self.scale**2
+        square_scale = self.scale**2
+        square_low = self.low**2
+        square_high = self.high**2
+
         term1 = cdf_high - cdf_low
-        term2 = x_high * pdf_high - x_low * pdf_low
-        square_low = (self.low - self.mean)**2 
-        term3 = square_low * cdf_low 
-        square_high = (self.high - self.mean)**2 
-        term4 = square_high * (1. - cdf_high)
-        return  (self.scale ** 2) * (term1 - term2) + term3 + term4
+        term2 = pdf_high - pdf_low
+        term3 = x_high * pdf_high - x_low * pdf_low
 
+        term4 = square_low * cdf_low
+        term5 = square_high * (1. - cdf_high)
+        return  scaler * term1 - 2 * self.loc * self.scale * term2  - square_scale * term3 + term4 + term5 - self.mean**2
 
+    
     def __init__(self, loc, scale, low, high, validate_args=None):
         self.loc, self.scale, self.low, self.high = broadcast_all(loc, scale, low, high)
         if isinstance(loc, Number) and isinstance(scale, Number) and isinstance(low, Number) and isinstance(high, Number):
