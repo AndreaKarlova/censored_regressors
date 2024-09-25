@@ -47,12 +47,15 @@ class CensoredNormal(ExponentialFamily):
         x_high = (self.high - self.loc)/self.scale
         cdf_high = self._normal_cdf(self.high)
         pdf_high = math.exp(self._normal_log_prob(self.high))
+        
         x_low = (self.low - self.loc)/self.scale
         cdf_low = self._normal_cdf(self.low)
         pdf_low = math.exp(self._normal_log_prob(self.low))
+        
         term1 = cdf_high - cdf_low
         term2 = pdf_high - pdf_low
-        return self.loc * term1 - self.scale * term2
+        term3 = self.low * cdf_low + self.high * (1. - cdf_high)
+        return self.loc * term1 - self.scale * term2 + term3 
 
     @property
     def stddev(self):
@@ -63,14 +66,25 @@ class CensoredNormal(ExponentialFamily):
         x_high = (self.high - self.loc)/self.scale
         cdf_high = self._normal_cdf(self.high)
         pdf_high = math.exp(self._normal_log_prob(self.high))
+
         x_low = (self.low - self.loc)/self.scale
         cdf_low = self._normal_cdf(self.low)
         pdf_low = math.exp(self._normal_log_prob(self.low))
+
+        scaler = self.loc**2 + self.scale**2
+        square_scale = self.scale**2
+        square_low = self.low**2
+        square_high = self.high**2
+
         term1 = cdf_high - cdf_low
-        term2 = x_high * pdf_high - x_low * pdf_low
-        return  (self.scale ** 2) * (term1 - term2)
+        term2 = pdf_high - pdf_low
+        term3 = x_high * pdf_high - x_low * pdf_low
 
+        term4 = square_low * cdf_low
+        term5 = square_high * (1. - cdf_high)
+        return  scaler * term1 - 2 * self.loc * self.scale * term2  - square_scale * term3 + term4 + term5 - self.mean**2
 
+    
     def __init__(self, loc, scale, low, high, validate_args=None):
         self.loc, self.scale, self.low, self.high = broadcast_all(loc, scale, low, high)
         if isinstance(loc, Number) and isinstance(scale, Number) and isinstance(low, Number) and isinstance(high, Number):
@@ -114,20 +128,20 @@ class CensoredNormal(ExponentialFamily):
             self._validate_sample(value)
         probs = torch.exp(self.log_prob(value))
         lower_cdf_mass = self._normal_cdf(self.low)
-        upper_cdf_mass = 1 - self._normal_cdf(self.high)
+        upper_cdf_mass = 1. - self._normal_cdf(self.high)
         probs = torch.where(value <= self.low, lower_cdf_mass, probs)
         probs = torch.where(value >= self.high, upper_cdf_mass, probs)
         return probs
 
-    def log_prob(self, value, jitter=1e-12):
+    def log_prob(self, value, jitter=1e-6):
         """jitter: used to bounce off NormCDF from 0 before applying log """
         if self._validate_args:
             self._validate_sample(value)
         log_probs = self._normal_log_prob(value)
         lower_log_cdf_mass = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
                                                                                                 Number) else (self._normal_cdf(self.low) + jitter).log()
-        upper_log_cdf_mass = math.log(1 - self._normal_cdf(self.high) + jitter) if isinstance(1 - self._normal_cdf(self.high) + jitter,
-                                                                                                    Number) else (1 - self._normal_cdf(self.high) + jitter).log()
+        upper_log_cdf_mass = math.log(self._normal_cdf(-self.high) + jitter) if isinstance(self._normal_cdf(-self.high) + jitter,
+                                                                                                    Number) else (self._normal_cdf(-self.high) + jitter).log()
         log_probs = torch.where(value <= self.low, lower_log_cdf_mass, log_probs)
         log_probs = torch.where(value >= self.high, upper_log_cdf_mass, log_probs)
         return log_probs
@@ -144,19 +158,20 @@ class CensoredNormal(ExponentialFamily):
         result = self._normal_icdf(value)
         return result.clamp(min=self.low, max=self.high)
 
-    def entropy(self, jitter=1e-12):
+    def entropy(self, jitter=1e-6):
         x_low = (self.low - self.loc)/self.scale
+        cdf_low = self._normal_cdf(self.low)
         x_high = (self.high - self.loc)/self.scale
+        cdf_high = self._normal_cdf(self.high)
 
-        logcdf_x_low = math.log(self._normal_cdf(self.low) + jitter) if isinstance(self._normal_cdf(self.low) + jitter,
-                                                                                                  Number) else (self._normal_cdf(self.low) + jitter).log()
-        logcdf_x_high = math.log(self._normal_cdf_standardized(-x_high) + jitter) if isinstance(self._normal_cdf_standardized(x_high) + jitter,
-                                                                                                      Number) else (self._normal_cdf_standardized(-x_high) + jitter).log()
+        logcdf_x_low = math.log(cdf_low + jitter) if isinstance(cdf_low + jitter, Number) else (cdf_low + jitter).log()
+        logcdf_x_high = math.log(self._normal_cdf(-self.high) + jitter) if isinstance(self._normal_cdf(-self.high) + jitter,
+                                                                                                      Number) else (self._normal_cdf(-self.high) + jitter).log()
 
-        term1 = self._normal_entropy() * (self._normal_cdf(self.high)- self._normal_cdf(self.low))
+        term1 = self._normal_entropy() * (cdf_high - cdf_low)
         term2 = 0.5 * (x_high * torch.exp(self._normal_log_prob(self.high)) - x_low * torch.exp(self._normal_log_prob(self.low)))
-        term3 = logcdf_x_low * self._normal_cdf(self.low)
-        term4 = logcdf_x_high * (self._normal_cdf_standardized(-x_high))
+        term3 = logcdf_x_low * cdf_low
+        term4 = logcdf_x_high * (self._normal_cdf(-x_high))
         return term1 - term2 - term3 - term4
 
 
@@ -186,9 +201,12 @@ class CensoredNormal(ExponentialFamily):
         return self.loc + self.scale * torch.erfinv(2 * value - 1) * math.sqrt(2)
 
 
-    def _normal_entropy(self):\
+    def _normal_entropy(self):
         # log(sqrt(2 pi e) * sigma) = 0.5 * log(2 pi e) + log(sigma) = 0.5 + 0.5 (log(2 pi)) + log(sigma)
-        return 0.5 + 0.5 * math.log(2 * math.pi) + torch.log(self.scale)
+        log_scale = (
+                math.log(self.scale) if isinstance(self.scale, Real) else self.scale.log()
+            )
+        return 0.5 + 0.5 * math.log(2 * math.pi) + log_scale
 
     @property
     def _normal_natural_params(self):
