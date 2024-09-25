@@ -62,7 +62,7 @@ class CensoredNormal(ExponentialFamily):
         return self.variance.sqrt()
 
     @property
-     def variance(self):
+    def variance(self):
         x_high = (self.high - self.loc)/self.scale
         cdf_high = self._normal_cdf(self.high)
         pdf_high = math.exp(self._normal_log_prob(self.high))
