@@ -9,6 +9,7 @@ import torch.distributions as dist
 from torch import Tensor
 from gpytorch.likelihoods.likelihood import Likelihood
 from gpytorch.likelihoods.noise_models import HomoskedasticNoise
+from .censored_normal import CensoredNormal
 
 
 class CensoredGaussianLikelihood(Likelihood):
